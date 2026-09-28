@@ -1,0 +1,11 @@
+name: PiggyPet
+version: '1.0'
+main: pl.twojnick.piggypet.PiggyPet
+api-version: '1.20'
+author: TwojNick
+description: Plugin dodajacy swinie-peta z ekwipunkiem.
+
+commands:
+  swinia:
+    description: Glowna komenda pluginu PiggyPet
+    usage: /swinia [spawn|nazwa]
