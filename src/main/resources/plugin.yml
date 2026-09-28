@@ -1,9 +1,9 @@
 name: PiggyPet
-version: '2.1'
+version: '2.3'
 main: pl.twojnick.piggypet.PiggyPet
 api-version: '1.20'
 author: TwojNick
-description: Zaawansowany plugin na swinie-peta z systemem ucieczki i AFK.
+description: Zaawansowany plugin na swinie-peta z automatycznym respawnem i opcjami OP.
 
 commands:
   swinia:
