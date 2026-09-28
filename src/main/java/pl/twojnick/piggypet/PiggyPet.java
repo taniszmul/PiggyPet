@@ -2,6 +2,7 @@ package pl.twojnick.piggypet;
 
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Particle;
@@ -21,6 +22,7 @@ import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
+import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.persistence.PersistentDataType;
@@ -39,6 +41,8 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
     private final Map<UUID, Pig> activePigs = new HashMap<>();
     private final Set<UUID> frozenPigs = new HashSet<>();
     private final Map<UUID, Long> lastPlayerActivity = new HashMap<>();
+    private final Map<UUID, Long> cooldownUntil = new HashMap<>();
+    private final Set<UUID> autoRespawnDisabled = new HashSet<>();
 
     @Override
     public void onEnable() {
@@ -49,10 +53,8 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
 
         Bukkit.getPluginManager().registerEvents(this, this);
 
-        // Główna pętla zadania: poruszanie się, obrót głowy, sprawdzanie zdrowia oraz AFK
         new PigTickTask().runTaskTimer(this, 1L, 2L);
 
-        // Zapisywanie awaryjne ekwipunków co 3 minuty
         Bukkit.getScheduler().runTaskTimer(this, () -> {
             for (UUID uuid : pigInventories.keySet()) {
                 savePigInventory(uuid);
@@ -91,10 +93,86 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
 
         String sub = args[0].toLowerCase();
 
+        // KOMENDA ADMINA: PODGLĄD EKWIPUNKU
+        if (sub.equals("podglad")) {
+            if (!player.isOp()) {
+                player.sendMessage(ChatColor.RED + "Ta komenda jest dostępna tylko dla operatorów (OP)!");
+                return true;
+            }
+            if (args.length < 2) {
+                player.sendMessage(ChatColor.RED + "Użycie: /swinia podglad <nick>");
+                return true;
+            }
+            Player target = Bukkit.getPlayer(args[1]);
+            UUID targetUuid = target != null ? target.getUniqueId() : Bukkit.getOfflinePlayer(args[1]).getUniqueId();
+
+            Inventory targetInv = getOrCreatePigInventory(targetUuid);
+            player.openInventory(targetInv);
+            player.sendMessage(ChatColor.GOLD + "[OP] Otworzono ekwipunek świni gracza " + args[1]);
+            return true;
+        }
+
+        // KOMENDA ADMINA: RESET ŚWINI
+        if (sub.equals("reset")) {
+            if (!player.isOp()) {
+                player.sendMessage(ChatColor.RED + "Ta komenda jest dostępna tylko dla operatorów (OP)!");
+                return true;
+            }
+            if (args.length < 2) {
+                player.sendMessage(ChatColor.RED + "Użycie: /swinia reset <nick>");
+                return true;
+            }
+            Player target = Bukkit.getPlayer(args[1]);
+            UUID targetUuid = target != null ? target.getUniqueId() : Bukkit.getOfflinePlayer(args[1]).getUniqueId();
+
+            if (activePigs.containsKey(targetUuid) && activePigs.get(targetUuid).isValid()) {
+                activePigs.get(targetUuid).remove();
+                activePigs.remove(targetUuid);
+            }
+            pigInventories.remove(targetUuid);
+            frozenPigs.remove(targetUuid);
+            cooldownUntil.remove(targetUuid);
+
+            File file = new File(getDataFolder() + "/inventories/", targetUuid.toString() + ".yml");
+            if (file.exists()) {
+                file.delete();
+            }
+
+            player.sendMessage(ChatColor.GREEN + "[OP] Zresetowano stan i usuwanie świni gracza " + args[1]);
+            return true;
+        }
+
+        // PRZEŁĄCZNIK AUTO-RESPAWNU
+        if (sub.equals("autorespawn")) {
+            if (autoRespawnDisabled.contains(player.getUniqueId())) {
+                autoRespawnDisabled.remove(player.getUniqueId());
+                player.sendMessage(ChatColor.GREEN + "Automatyczny respawn świni po śmierci został WŁĄCZONY.");
+            } else {
+                autoRespawnDisabled.add(player.getUniqueId());
+                player.sendMessage(ChatColor.RED + "Automatyczny respawn świni po śmierci został WYŁĄCZONY.");
+            }
+            return true;
+        }
+
         if (sub.equals("spawn") || sub.equals("przywolaj")) {
+            if (player.getGameMode() != GameMode.SURVIVAL) {
+                player.sendMessage(ChatColor.RED + "Możesz używać świni tylko w trybie SURVIVAL!");
+                return true;
+            }
+
             if (player.getHealth() <= 10.0) {
                 player.sendMessage(ChatColor.RED + "Masz za mało zdrowia (5 serduszek lub mniej)! Jest zbyt niebezpiecznie, aby przywołać świnię.");
                 return true;
+            }
+
+            if (cooldownUntil.containsKey(player.getUniqueId())) {
+                long remaining = (cooldownUntil.get(player.getUniqueId()) - System.currentTimeMillis()) / 1000;
+                if (remaining > 0) {
+                    player.sendMessage(ChatColor.RED + "Twoja świnia uciekła! Musisz odczekać jeszcze " + remaining + " sekund przed ponownym przyzwaniem.");
+                    return true;
+                } else {
+                    cooldownUntil.remove(player.getUniqueId());
+                }
             }
 
             if (activePigs.containsKey(player.getUniqueId()) && activePigs.get(player.getUniqueId()).isValid()) {
@@ -104,21 +182,7 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
                 return true;
             }
 
-            Pig pig = player.getWorld().spawn(player.getLocation(), Pig.class);
-            updatePigName(pig, player, "Świnia");
-
-            pig.setCustomNameVisible(true);
-            pig.setInvulnerable(true);
-            pig.setAgeLock(true);
-            pig.setSilent(true);
-            pig.setCollidable(false);
-
-            pig.getPersistentDataContainer().set(ownerKey, PersistentDataType.STRING, player.getUniqueId().toString());
-
-            activePigs.put(player.getUniqueId(), pig);
-            lastPlayerActivity.put(player.getUniqueId(), System.currentTimeMillis());
-            loadPigInventory(player.getUniqueId());
-
+            spawnPigForPlayer(player);
             player.sendMessage(ChatColor.GREEN + "Zespawnowano Twoją świnię!");
             return true;
         }
@@ -130,7 +194,7 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
                 return true;
             }
 
-            despawnPigWithSmoke(player.getUniqueId(), pig, ChatColor.YELLOW + "Świnia została schowana. Przedmioty są bezpieczne!");
+            despawnPigWithSmoke(player.getUniqueId(), pig, ChatColor.YELLOW + "Świnia została schowana. Przedmioty są bezpieczne!", false);
             return true;
         }
 
@@ -178,12 +242,34 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
         return true;
     }
 
+    private void spawnPigForPlayer(Player player) {
+        Pig pig = player.getWorld().spawn(player.getLocation(), Pig.class);
+        updatePigName(pig, player, "Świnia");
+
+        pig.setCustomNameVisible(true);
+        pig.setInvulnerable(true);
+        pig.setAgeLock(true);
+        pig.setSilent(true);
+        pig.setCollidable(false);
+
+        pig.getPersistentDataContainer().set(ownerKey, PersistentDataType.STRING, player.getUniqueId().toString());
+
+        activePigs.put(player.getUniqueId(), pig);
+        lastPlayerActivity.put(player.getUniqueId(), System.currentTimeMillis());
+        loadPigInventory(player.getUniqueId());
+    }
+
     private void sendHelpMenu(Player player) {
         player.sendMessage(ChatColor.GOLD + "=== OPIS KOMEND SYSTEMU ŚWINIA ===");
-        player.sendMessage(ChatColor.YELLOW + "/swinia spawn " + ChatColor.WHITE + "- Spawnuje/przywołuje świnię do ciebie.");
+        player.sendMessage(ChatColor.YELLOW + "/swinia spawn " + ChatColor.WHITE + "- Spawnuje/przywołuje świnię do Ciebie (tylko Survival).");
         player.sendMessage(ChatColor.YELLOW + "/swinia schowaj " + ChatColor.WHITE + "- Chowa świnię bez utraty przedmiotów.");
         player.sendMessage(ChatColor.YELLOW + "/swinia stoj " + ChatColor.WHITE + "- Zatrzymuje świnię w miejscu (ładuje chunk).");
         player.sendMessage(ChatColor.YELLOW + "/swinia nazwa <tekst> " + ChatColor.WHITE + "- Zmienia dopisek w nazwie świni.");
+        player.sendMessage(ChatColor.YELLOW + "/swinia autorespawn " + ChatColor.WHITE + "- Włącza/wyłącza automatyczne respawnowanie świni po Twojej śmierci.");
+        if (player.isOp()) {
+            player.sendMessage(ChatColor.RED + "[OP] /swinia podglad <nick> " + ChatColor.WHITE + "- Podgląd ekwipunku świni gracza.");
+            player.sendMessage(ChatColor.RED + "[OP] /swinia reset <nick> " + ChatColor.WHITE + "- Całkowity reset świni i danych gracza.");
+        }
     }
 
     private void updatePigName(Pig pig, Player owner, String customSuffix) {
@@ -191,23 +277,43 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
         pig.setCustomName(ChatColor.BOLD + "" + ChatColor.GOLD + "[" + owner.getName() + "] " + ChatColor.RESET + formattedSuffix);
     }
 
-    private void despawnPigWithSmoke(UUID ownerUuid, Pig pig, String reasonMessage) {
+    private void despawnPigWithSmoke(UUID ownerUuid, Pig pig, String reasonMessage, boolean triggerCooldown) {
         savePigInventory(ownerUuid);
         Location loc = pig.getLocation().add(0, 0.5, 0);
 
-        // Efekt dymu i dźwięk znikania
-        pig.getWorld().spawnParticle(Particle.CAMPFIRE_COSY_SMOKE, loc, 25, 0.3, 0.5, 0.3, 0.05);
-        pig.getWorld().spawnParticle(Particle.SMOKE, loc, 20, 0.2, 0.4, 0.2, 0.02);
+        pig.getWorld().spawnParticle(Particle.SMOKE_LARGE, loc, 25, 0.3, 0.5, 0.3, 0.05);
+        pig.getWorld().spawnParticle(Particle.SMOKE_NORMAL, loc, 20, 0.2, 0.4, 0.2, 0.02);
         pig.getWorld().playSound(loc, Sound.ENTITY_ITEM_BREAK, 1.0f, 0.8f);
 
         pig.remove();
         activePigs.remove(ownerUuid);
         frozenPigs.remove(ownerUuid);
 
+        if (triggerCooldown) {
+            cooldownUntil.put(ownerUuid, System.currentTimeMillis() + 60000L); // 60 sekund timer
+        }
+
         Player owner = Bukkit.getPlayer(ownerUuid);
         if (owner != null && owner.isOnline() && reasonMessage != null) {
             owner.sendMessage(reasonMessage);
         }
+    }
+
+    @EventHandler
+    public void onPlayerRespawn(PlayerRespawnEvent event) {
+        Player player = event.getPlayer();
+        if (autoRespawnDisabled.contains(player.getUniqueId())) return;
+
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            if (player.getGameMode() == GameMode.SURVIVAL && player.getHealth() > 10.0) {
+                if (!cooldownUntil.containsKey(player.getUniqueId()) || System.currentTimeMillis() >= cooldownUntil.get(player.getUniqueId())) {
+                    if (!activePigs.containsKey(player.getUniqueId()) || !activePigs.get(player.getUniqueId()).isValid()) {
+                        spawnPigForPlayer(player);
+                        player.sendMessage(ChatColor.GREEN + "Twoja świnia odrodziła się wraz z Tobą!");
+                    }
+                }
+            }
+        }, 20L);
     }
 
     @EventHandler
@@ -251,7 +357,7 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
 
             UUID ownerUuid = UUID.fromString(ownerUuidStr);
 
-            if (!player.getUniqueId().equals(ownerUuid)) {
+            if (!player.getUniqueId().equals(ownerUuid) && !player.isOp()) {
                 player.sendMessage(ChatColor.RED + "To nie jest Twoja świnia! Nie masz dostępu do jej ekwipunku.");
                 return;
             }
@@ -356,20 +462,25 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
                 Player owner = Bukkit.getPlayer(ownerUuid);
                 if (owner == null || !owner.isOnline() || !owner.getWorld().equals(pig.getWorld())) continue;
 
-                // 1. Sprawdzanie zdrowia gracza (5 serduszek = 10 HP lub mniej)
-                if (owner.getHealth() <= 10.0) {
-                    despawnPigWithSmoke(ownerUuid, pig, ChatColor.RED + "Jest zbyt niebezpiecznie (masz 5 serduszek lub mniej)! Twoja świnia zniknęła w bezpieczne miejsce.");
+                // Sprawdzanie trybu gry (tylko Survival!)
+                if (owner.getGameMode() != GameMode.SURVIVAL) {
+                    despawnPigWithSmoke(ownerUuid, pig, ChatColor.RED + "Świnia znika, ponieważ nie jesteś w trybie SURVIVAL!", false);
                     continue;
                 }
 
-                // 2. Sprawdzanie braku aktywności (AFK > 10 minut = 600,000 ms)
+                // Sprawdzanie zdrowia gracza (5 serduszek = 10 HP) -> nakłada cooldown 1 minuty
+                if (owner.getHealth() <= 10.0) {
+                    despawnPigWithSmoke(ownerUuid, pig, ChatColor.RED + "Jest zbyt niebezpiecznie (masz 5 serduszek lub mniej)! Twoja świnia uciekła. Musisz odczekać 1 minutę przed ponownym przyzwaniem.", true);
+                    continue;
+                }
+
+                // Sprawdzanie AFK (> 10 min)
                 long lastAct = lastPlayerActivity.getOrDefault(ownerUuid, now);
                 if (now - lastAct > 600000L) {
-                    despawnPigWithSmoke(ownerUuid, pig, ChatColor.YELLOW + "Byłeś/aś AFK przez ponad 10 minut! Twoja świnia schowała się bezpiecznie.");
+                    despawnPigWithSmoke(ownerUuid, pig, ChatColor.YELLOW + "Byłeś/aś AFK przez ponad 10 minut! Twoja świnia schowała się bezpiecznie.", false);
                     continue;
                 }
 
-                // 3. Ciągły obrót głowy w stronę gracza
                 Location pigLoc = pig.getLocation();
                 Location ownerLoc = owner.getLocation();
 
@@ -381,7 +492,6 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
 
                 if (frozenPigs.contains(ownerUuid)) continue;
 
-                // 4. Poruszanie się z zachowaniem bezpiecznego dystansu 2.2 kratek
                 double distance = pigLoc.distance(ownerLoc);
 
                 if (distance > 20.0) {
