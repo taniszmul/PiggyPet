@@ -93,7 +93,6 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
 
         String sub = args[0].toLowerCase();
 
-        // KOMENDA ADMINA: PODGLĄD EKWIPUNKU
         if (sub.equals("podglad")) {
             if (!player.isOp()) {
                 player.sendMessage(ChatColor.RED + "Ta komenda jest dostępna tylko dla operatorów (OP)!");
@@ -112,7 +111,6 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
             return true;
         }
 
-        // KOMENDA ADMINA: RESET ŚWINI
         if (sub.equals("reset")) {
             if (!player.isOp()) {
                 player.sendMessage(ChatColor.RED + "Ta komenda jest dostępna tylko dla operatorów (OP)!");
@@ -142,7 +140,6 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
             return true;
         }
 
-        // PRZEŁĄCZNIK AUTO-RESPAWNU
         if (sub.equals("autorespawn")) {
             if (autoRespawnDisabled.contains(player.getUniqueId())) {
                 autoRespawnDisabled.remove(player.getUniqueId());
@@ -290,7 +287,7 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
         frozenPigs.remove(ownerUuid);
 
         if (triggerCooldown) {
-            cooldownUntil.put(ownerUuid, System.currentTimeMillis() + 60000L); // 60 sekund timer
+            cooldownUntil.put(ownerUuid, System.currentTimeMillis() + 60000L);
         }
 
         Player owner = Bukkit.getPlayer(ownerUuid);
@@ -462,19 +459,16 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
                 Player owner = Bukkit.getPlayer(ownerUuid);
                 if (owner == null || !owner.isOnline() || !owner.getWorld().equals(pig.getWorld())) continue;
 
-                // Sprawdzanie trybu gry (tylko Survival!)
                 if (owner.getGameMode() != GameMode.SURVIVAL) {
                     despawnPigWithSmoke(ownerUuid, pig, ChatColor.RED + "Świnia znika, ponieważ nie jesteś w trybie SURVIVAL!", false);
                     continue;
                 }
 
-                // Sprawdzanie zdrowia gracza (5 serduszek = 10 HP) -> nakłada cooldown 1 minuty
                 if (owner.getHealth() <= 10.0) {
                     despawnPigWithSmoke(ownerUuid, pig, ChatColor.RED + "Jest zbyt niebezpiecznie (masz 5 serduszek lub mniej)! Twoja świnia uciekła. Musisz odczekać 1 minutę przed ponownym przyzwaniem.", true);
                     continue;
                 }
 
-                // Sprawdzanie AFK (> 10 min)
                 long lastAct = lastPlayerActivity.getOrDefault(ownerUuid, now);
                 if (now - lastAct > 600000L) {
                     despawnPigWithSmoke(ownerUuid, pig, ChatColor.YELLOW + "Byłeś/aś AFK przez ponad 10 minut! Twoja świnia schowała się bezpiecznie.", false);
@@ -497,9 +491,9 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
                 if (distance > 20.0) {
                     pig.teleport(ownerLoc);
                 } else if (distance > 2.2) {
-                    pig.getPathfinder().moveTo(ownerLoc, 1.25);
+                    pig.setTarget(owner); // Uniwersalne podążanie za graczem
                 } else {
-                    pig.getPathfinder().stop();
+                    pig.setTarget(null); // Zatrzymaj się (dystans zachowany)
                 }
             }
         }
