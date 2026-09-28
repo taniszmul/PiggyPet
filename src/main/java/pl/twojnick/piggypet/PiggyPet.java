@@ -136,7 +136,7 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
                 file.delete();
             }
 
-            player.sendMessage(ChatColor.GREEN + "[OP] Zresetowano stan i usuwanie świni gracza " + args[1]);
+            player.sendMessage(ChatColor.GREEN + "[OP] Zresetowano stan i usunięto dane świni gracza " + args[1]);
             return true;
         }
 
@@ -481,7 +481,6 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
                 Vector direction = ownerLoc.toVector().subtract(pigLoc.toVector());
                 if (direction.lengthSquared() > 0) {
                     pigLoc.setDirection(direction);
-                    pig.teleport(pigLoc);
                 }
 
                 if (frozenPigs.contains(ownerUuid)) continue;
@@ -491,9 +490,9 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
                 if (distance > 20.0) {
                     pig.teleport(ownerLoc);
                 } else if (distance > 2.2) {
-                    pig.setTarget(owner); // Uniwersalne podążanie za graczem
-                } else {
-                    pig.setTarget(null); // Zatrzymaj się (dystans zachowany)
+                    Vector moveVec = direction.normalize().multiply(0.25);
+                    pigLoc.add(moveVec);
+                    pig.teleport(pigLoc);
                 }
             }
         }
