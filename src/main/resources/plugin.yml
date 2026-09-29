@@ -1,5 +1,5 @@
 name: SwiniaPlugin
-version: 2.9
+version: 2.9.2
 main: pl.twojnick.piggypet.PiggyPet
 api-version: 1.13
 authors: [TwojNick]
