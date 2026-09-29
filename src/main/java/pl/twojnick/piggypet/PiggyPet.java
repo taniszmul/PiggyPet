@@ -25,7 +25,7 @@ import org.bukkit.scheduler.BukkitTask;
 
 import java.util.*;
 
-public class SwiniaPlugin extends JavaPlugin implements Listener, CommandExecutor {
+public class PiggyPet extends JavaPlugin implements Listener, CommandExecutor {
 
     // Mapowanie: Właściciel UUID -> Jego Świnia
     private final Map<UUID, Pig> playerPigs = new HashMap<>();
@@ -177,7 +177,7 @@ public class SwiniaPlugin extends JavaPlugin implements Listener, CommandExecuto
                 if (pig != null && pig.isValid()) {
                     pigTargets.remove(pig);
                     Location loc = pig.getLocation();
-                    pig.getWorld().spawnParticle(Particle.SMOKE, loc.add(0, 0.5, 0), 40, 0.3, 0.3, 0.3, 0.05);
+                    pig.getWorld().spawnParticle(Particle.SMOKE_NORMAL, loc.add(0, 0.5, 0), 40, 0.3, 0.3, 0.3, 0.05);
                     pig.getWorld().playSound(loc, Sound.ENTITY_PIG_DEATH, 1.0f, 0.8f);
                     pig.remove();
                 }
@@ -321,7 +321,7 @@ public class SwiniaPlugin extends JavaPlugin implements Listener, CommandExecuto
 
                 clicker.sendMessage(ChatColor.GREEN + "Dałeś marchewkę świni! Odstraszyłeś ją i wróciła do swojego właściciela.");
                 owner.sendMessage(ChatColor.YELLOW + "Twoja świnia została przekupiona marchewką przez " + clicker.getName() + " i do Ciebie wróciła!");
-                pig.getWorld().playSound(pig.getLocation(), Sound.ENTITY_PIG_EAT, 1.0f, 1.0f);
+                pig.getWorld().playSound(pig.getLocation(), Sound.ENTITY_GENERIC_EAT, 1.0f, 1.0f);
 
             } else {
                 // Właściciela NIE MA na serwerze -> Świnia znika z dymem
@@ -329,7 +329,7 @@ public class SwiniaPlugin extends JavaPlugin implements Listener, CommandExecuto
                 if (ownerUUID != null) playerPigs.remove(ownerUUID);
 
                 Location loc = pig.getLocation();
-                pig.getWorld().spawnParticle(Particle.SMOKE, loc.add(0, 0.5, 0), 30, 0.3, 0.3, 0.3, 0.05);
+                pig.getWorld().spawnParticle(Particle.SMOKE_NORMAL, loc.add(0, 0.5, 0), 30, 0.3, 0.3, 0.3, 0.05);
                 pig.getWorld().playSound(loc, Sound.ENTITY_ITEM_BREAK, 1.0f, 0.8f);
                 pig.getWorld().playSound(loc, Sound.ENTITY_PIG_DEATH, 0.5f, 1.2f);
 
