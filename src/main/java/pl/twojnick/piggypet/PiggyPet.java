@@ -39,7 +39,7 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
     private NamespacedKey ownerKey;
     private final Map<UUID, Inventory> pigInventories = new HashMap<>();
     private final Map<UUID, Pig> activePigs = new HashMap<>();
-    private final Set<UUID> frozenPigs = new HashSet<>();
+    private final Map<UUID, Location> frozenPigs = new HashMap<>(); // Zapamiętuje pozycję, w której świnia ma stać
     private final Map<UUID, Long> lastPlayerActivity = new HashMap<>();
     private final Map<UUID, Long> cooldownUntil = new HashMap<>();
     private final Set<UUID> autoRespawnDisabled = new HashSet<>();
@@ -202,14 +202,15 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
                 return true;
             }
 
-            if (frozenPigs.contains(player.getUniqueId())) {
+            if (frozenPigs.containsKey(player.getUniqueId())) {
                 frozenPigs.remove(player.getUniqueId());
                 pig.getChunk().setForceLoaded(false);
                 player.sendMessage(ChatColor.GREEN + "Świnia znowu za Tobą chodzi!");
             } else {
-                frozenPigs.add(player.getUniqueId());
+                Location currentLoc = pig.getLocation();
+                frozenPigs.put(player.getUniqueId(), currentLoc);
                 pig.getChunk().setForceLoaded(true);
-                player.sendMessage(ChatColor.GOLD + "Świnia stoi w miejscu i utrzymuje ten chunk w pamięci!");
+                player.sendMessage(ChatColor.GOLD + "Świnia zostaje w tym miejscu (promień 3 bloków) i utrzymuje chunk!");
             }
             return true;
         }
@@ -260,7 +261,7 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
         player.sendMessage(ChatColor.GOLD + "=== OPIS KOMEND SYSTEMU ŚWINIA ===");
         player.sendMessage(ChatColor.YELLOW + "/swinia spawn " + ChatColor.WHITE + "- Spawnuje/przywołuje świnię do Ciebie (tylko Survival).");
         player.sendMessage(ChatColor.YELLOW + "/swinia schowaj " + ChatColor.WHITE + "- Chowa świnię bez utraty przedmiotów.");
-        player.sendMessage(ChatColor.YELLOW + "/swinia stoj " + ChatColor.WHITE + "- Zatrzymuje świnię w miejscu (ładuje chunk).");
+        player.sendMessage(ChatColor.YELLOW + "/swinia stoj " + ChatColor.WHITE + "- Zatrzymuje świnię w promieniu 3 bloków.");
         player.sendMessage(ChatColor.YELLOW + "/swinia nazwa <tekst> " + ChatColor.WHITE + "- Zmienia dopisek w nazwie świni.");
         player.sendMessage(ChatColor.YELLOW + "/swinia autorespawn " + ChatColor.WHITE + "- Włącza/wyłącza automatyczne respawnowanie świni po Twojej śmierci.");
         if (player.isOp()) {
@@ -476,14 +477,25 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
                 }
 
                 Location pigLoc = pig.getLocation();
-                Location ownerLoc = owner.getLocation();
 
+                // OBSŁUGA OBSZARU STOJ (Promień 3 bloków)
+                if (frozenPigs.containsKey(ownerUuid)) {
+                    Location anchorLoc = frozenPigs.get(ownerUuid);
+                    if (pigLoc.distance(anchorLoc) > 3.0) {
+                        Vector backToAnchor = anchorLoc.toVector().subtract(pigLoc.toVector()).normalize().multiply(0.2);
+                        pigLoc.add(backToAnchor);
+                        pig.teleport(pigLoc);
+                    }
+                    continue;
+                }
+
+                // PORUSZANIE SIĘ ZA GRACZEM + ZABEZPIECZENIE PRZED WPADANIEM W ZIEMIĘ
+                Location ownerLoc = owner.getLocation();
                 Vector direction = ownerLoc.toVector().subtract(pigLoc.toVector());
+
                 if (direction.lengthSquared() > 0) {
                     pigLoc.setDirection(direction);
                 }
-
-                if (frozenPigs.contains(ownerUuid)) continue;
 
                 double distance = pigLoc.distance(ownerLoc);
 
@@ -492,6 +504,13 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
                 } else if (distance > 2.2) {
                     Vector moveVec = direction.normalize().multiply(0.25);
                     pigLoc.add(moveVec);
+
+                    // Pobieramy bezpieczną wysokość bloku (zabezpieczenie przed zapadaniem)
+                    int highestY = pigLoc.getWorld().getHighestBlockYAt(pigLoc);
+                    if (pigLoc.getY() < highestY + 1.0) {
+                        pigLoc.setY(highestY + 1.0);
+                    }
+
                     pig.teleport(pigLoc);
                 }
             }
