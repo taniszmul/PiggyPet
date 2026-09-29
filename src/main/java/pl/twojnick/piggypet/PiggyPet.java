@@ -4,6 +4,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
@@ -11,11 +12,14 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Pig;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.entity.EntityBreedEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
@@ -25,6 +29,7 @@ import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
@@ -39,7 +44,7 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
     private NamespacedKey ownerKey;
     private final Map<UUID, Inventory> pigInventories = new HashMap<>();
     private final Map<UUID, Pig> activePigs = new HashMap<>();
-    private final Map<UUID, Location> frozenPigs = new HashMap<>(); // Zapamiętuje pozycję, w której świnia ma stać
+    private final Map<UUID, Location> frozenPigs = new HashMap<>();
     private final Map<UUID, Long> lastPlayerActivity = new HashMap<>();
     private final Map<UUID, Long> cooldownUntil = new HashMap<>();
     private final Set<UUID> autoRespawnDisabled = new HashSet<>();
@@ -68,6 +73,12 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
     public void onDisable() {
         for (UUID ownerUuid : pigInventories.keySet()) {
             savePigInventory(ownerUuid);
+        }
+        // Czyszczenie ew. stojaków na grzyby przy wyłączaniu
+        for (Pig pig : activePigs.values()) {
+            if (pig != null && pig.isValid()) {
+                removeMushroomHat(pig);
+            }
         }
     }
 
@@ -124,7 +135,9 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
             UUID targetUuid = target != null ? target.getUniqueId() : Bukkit.getOfflinePlayer(args[1]).getUniqueId();
 
             if (activePigs.containsKey(targetUuid) && activePigs.get(targetUuid).isValid()) {
-                activePigs.get(targetUuid).remove();
+                Pig pig = activePigs.get(targetUuid);
+                removeMushroomHat(pig);
+                pig.remove();
                 activePigs.remove(targetUuid);
             }
             pigInventories.remove(targetUuid);
@@ -249,12 +262,40 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
         pig.setAgeLock(true);
         pig.setSilent(true);
         pig.setCollidable(false);
+        pig.setSaddle(false);
 
         pig.getPersistentDataContainer().set(ownerKey, PersistentDataType.STRING, player.getUniqueId().toString());
+
+        // Dodanie czapki z grzyba
+        attachMushroomHat(pig);
 
         activePigs.put(player.getUniqueId(), pig);
         lastPlayerActivity.put(player.getUniqueId(), System.currentTimeMillis());
         loadPigInventory(player.getUniqueId());
+    }
+
+    private void attachMushroomHat(Pig pig) {
+        removeMushroomHat(pig); // Upewniamy się, że nie ma starej czapki
+
+        ArmorStand stand = pig.getWorld().spawn(pig.getLocation(), ArmorStand.class);
+        stand.setVisible(false);
+        stand.setMarker(true);
+        stand.setSmall(true);
+        stand.setInvulnerable(true);
+        stand.setGravity(false);
+        if (stand.getEquipment() != null) {
+            stand.getEquipment().setHelmet(new ItemStack(Material.RED_MUSHROOM));
+        }
+
+        pig.addPassenger(stand);
+    }
+
+    private void removeMushroomHat(Pig pig) {
+        for (Entity passenger : new ArrayList<>(pig.getPassengers())) {
+            if (passenger instanceof ArmorStand) {
+                passenger.remove();
+            }
+        }
     }
 
     private void sendHelpMenu(Player player) {
@@ -283,6 +324,7 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
         pig.getWorld().spawnParticle(Particle.SMOKE_NORMAL, loc, 20, 0.2, 0.4, 0.2, 0.02);
         pig.getWorld().playSound(loc, Sound.ENTITY_ITEM_BREAK, 1.0f, 0.8f);
 
+        removeMushroomHat(pig);
         pig.remove();
         activePigs.remove(ownerUuid);
         frozenPigs.remove(ownerUuid);
@@ -341,15 +383,15 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
 
     @EventHandler
     public void onPigInteract(PlayerInteractEntityEvent event) {
-        if (event.getHand() != EquipmentSlot.HAND) return;
-
         Entity entity = event.getRightClicked();
         if (!(entity instanceof Pig pig)) return;
 
         if (pig.getPersistentDataContainer().has(ownerKey, PersistentDataType.STRING)) {
-            event.setCancelled(true);
-            Player player = event.getPlayer();
+            event.setCancelled(true); // Anuluje jeżdżenie, zakładanie siodła itp.
 
+            if (event.getHand() != EquipmentSlot.HAND) return;
+
+            Player player = event.getPlayer();
             String ownerUuidStr = pig.getPersistentDataContainer().get(ownerKey, PersistentDataType.STRING);
             if (ownerUuidStr == null) return;
 
@@ -362,6 +404,13 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
 
             Inventory pigInv = getOrCreatePigInventory(ownerUuid);
             player.openInventory(pigInv);
+        }
+    }
+
+    @EventHandler
+    public void onPigBreed(EntityBreedEvent event) {
+        if (event.getEntity() instanceof Pig pig && pig.getPersistentDataContainer().has(ownerKey, PersistentDataType.STRING)) {
+            event.setCancelled(true);
         }
     }
 
@@ -400,6 +449,7 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
                         pig.setInvulnerable(true);
                         pig.setSilent(true);
                         pig.setCollidable(false);
+                        attachMushroomHat(pig);
                     }
                 }
             }
@@ -458,7 +508,7 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
                 if (pig == null || !pig.isValid()) continue;
 
                 Player owner = Bukkit.getPlayer(ownerUuid);
-                if (owner == null || !owner.isOnline() || !owner.getWorld().equals(pig.getWorld())) continue;
+                if (owner == null || !owner.isOnline()) continue;
 
                 if (owner.getGameMode() != GameMode.SURVIVAL) {
                     despawnPigWithSmoke(ownerUuid, pig, ChatColor.RED + "Świnia znika, ponieważ nie jesteś w trybie SURVIVAL!", false);
@@ -476,12 +526,27 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
                     continue;
                 }
 
-                Location pigLoc = pig.getLocation();
+                // Zapewnienie istnienia czapeczki-grzyba
+                if (pig.getPassengers().isEmpty()) {
+                    attachMushroomHat(pig);
+                }
 
-                // OBSŁUGA OBSZARU STOJ (Promień 3 bloków)
-                if (frozenPigs.containsKey(ownerUuid)) {
+                Location pigLoc = pig.getLocation();
+                Location ownerLoc = owner.getLocation();
+
+                // SPRAWDZENIE TELEPORTACJI (Różne światy LUB dystans > 20 bloków)
+                boolean isDifferentWorld = !pigLoc.getWorld().equals(ownerLoc.getWorld());
+                boolean isTooFar = !isDifferentWorld && pigLoc.distance(ownerLoc) > 20.0;
+
+                if (!frozenPigs.containsKey(ownerUuid)) {
+                    if (isDifferentWorld || isTooFar) {
+                        pig.teleport(ownerLoc);
+                        continue;
+                    }
+                } else {
+                    // Obsługa zatrzymania
                     Location anchorLoc = frozenPigs.get(ownerUuid);
-                    if (pigLoc.distance(anchorLoc) > 3.0) {
+                    if (pigLoc.getWorld().equals(anchorLoc.getWorld()) && pigLoc.distance(anchorLoc) > 3.0) {
                         Vector backToAnchor = anchorLoc.toVector().subtract(pigLoc.toVector()).normalize().multiply(0.2);
                         pigLoc.add(backToAnchor);
                         pig.teleport(pigLoc);
@@ -489,8 +554,7 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
                     continue;
                 }
 
-                // PORUSZANIE SIĘ ZA GRACZEM + ZABEZPIECZENIE PRZED WPADANIEM W ZIEMIĘ
-                Location ownerLoc = owner.getLocation();
+                // CHODZENIE ZA GRACZEM
                 Vector direction = ownerLoc.toVector().subtract(pigLoc.toVector());
 
                 if (direction.lengthSquared() > 0) {
@@ -499,13 +563,10 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
 
                 double distance = pigLoc.distance(ownerLoc);
 
-                if (distance > 20.0) {
-                    pig.teleport(ownerLoc);
-                } else if (distance > 2.2) {
+                if (distance > 2.2) {
                     Vector moveVec = direction.normalize().multiply(0.25);
                     pigLoc.add(moveVec);
 
-                    // Pobieramy bezpieczną wysokość bloku (zabezpieczenie przed zapadaniem)
                     int highestY = pigLoc.getWorld().getHighestBlockYAt(pigLoc);
                     if (pigLoc.getY() < highestY + 1.0) {
                         pigLoc.setY(highestY + 1.0);
