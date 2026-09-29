@@ -1,6 +1,6 @@
 name: SwiniaPlugin
 version: 2.9.4
-main: pl.twojnick.piggypet.PiggyPet
+main: com.github.taniszmul.piggypet.PiggyPet
 api-version: 1.13
 authors: [TwojNick]
 description: Zaawansowany system osobistej swini dla graczy.
