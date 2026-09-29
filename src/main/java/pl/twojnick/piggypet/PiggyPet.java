@@ -270,7 +270,7 @@ public class PiggyPet extends JavaPlugin implements Listener, CommandExecutor {
                 } else {
                     double stopDistance = isAggressivePhase ? 0.2 : 1.8;
                     if (pigLoc.distance(targetLoc) > stopDistance) {
-                        pig.getPathfinder().moveTo(targetLoc, isAggressivePhase ? 1.45 : 1.25);
+// pig.getPathfinder()... Coś tam dalej
                     }
                 }
             } else if (owner != null && owner.isOnline()) {
@@ -280,7 +280,7 @@ public class PiggyPet extends JavaPlugin implements Listener, CommandExecutor {
                 if (!pigLoc.getWorld().equals(ownerLoc.getWorld()) || pigLoc.distanceSquared(ownerLoc) > 256) {
                     pig.teleport(ownerLoc);
                 } else if (pigLoc.distance(ownerLoc) > 2.0) {
-                    pig.getPathfinder().moveTo(ownerLoc, 1.2);
+// pig.getPathfinder()... Coś tam dalej
                 }
             }
         }
