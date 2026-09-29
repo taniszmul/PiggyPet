@@ -14,7 +14,6 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
-import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Pig;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -23,6 +22,7 @@ import org.bukkit.event.entity.EntityBreedEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
@@ -48,6 +48,7 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
     private final Map<UUID, Long> lastPlayerActivity = new HashMap<>();
     private final Map<UUID, Long> cooldownUntil = new HashMap<>();
     private final Set<UUID> autoRespawnDisabled = new HashSet<>();
+    private final Map<UUID, Long> waterTimeMap = new HashMap<>(); // Czas wdrożenia w wodzie
 
     @Override
     public void onEnable() {
@@ -74,7 +75,6 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
         for (UUID ownerUuid : pigInventories.keySet()) {
             savePigInventory(ownerUuid);
         }
-        // Czyszczenie ew. stojaków na grzyby przy wyłączaniu
         for (Pig pig : activePigs.values()) {
             if (pig != null && pig.isValid()) {
                 removeMushroomHat(pig);
@@ -104,6 +104,7 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
 
         String sub = args[0].toLowerCase();
 
+        // --- KOMENDY ADMINA ---
         if (sub.equals("podglad")) {
             if (!player.isOp()) {
                 player.sendMessage(ChatColor.RED + "Ta komenda jest dostępna tylko dla operatorów (OP)!");
@@ -119,6 +120,46 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
             Inventory targetInv = getOrCreatePigInventory(targetUuid);
             player.openInventory(targetInv);
             player.sendMessage(ChatColor.GOLD + "[OP] Otworzono ekwipunek świni gracza " + args[1]);
+            return true;
+        }
+
+        if (sub.equals("podgladopis")) {
+            if (!player.isOp()) {
+                player.sendMessage(ChatColor.RED + "Ta komenda jest dostępna tylko dla operatorów (OP)!");
+                return true;
+            }
+            if (args.length < 2) {
+                player.sendMessage(ChatColor.RED + "Użycie: /swinia podgladopis <nick>");
+                return true;
+            }
+            Player target = Bukkit.getPlayer(args[1]);
+            UUID targetUuid = target != null ? target.getUniqueId() : Bukkit.getOfflinePlayer(args[1]).getUniqueId();
+
+            String description = getPigDescription(targetUuid, args[1]);
+            player.sendMessage(ChatColor.GOLD + "[OP] Opis świni gracza " + args[1] + ": " + ChatColor.WHITE + description);
+            return true;
+        }
+
+        if (sub.equals("zmienopis")) {
+            if (!player.isOp()) {
+                player.sendMessage(ChatColor.RED + "Ta komenda jest dostępna tylko dla operatorów (OP)!");
+                return true;
+            }
+            if (args.length < 3) {
+                player.sendMessage(ChatColor.RED + "Użycie: /swinia zmienopis <nick> <nowy_opis>");
+                return true;
+            }
+            Player target = Bukkit.getPlayer(args[1]);
+            UUID targetUuid = target != null ? target.getUniqueId() : Bukkit.getOfflinePlayer(args[1]).getUniqueId();
+
+            StringBuilder sb = new StringBuilder();
+            for (int i = 2; i < args.length; i++) {
+                sb.append(args[i]).append(" ");
+            }
+            String newDesc = sb.toString().trim();
+            savePigDescription(targetUuid, newDesc);
+
+            player.sendMessage(ChatColor.GREEN + "[OP] Zmieniono opis świni gracza " + args[1] + " na: " + ChatColor.WHITE + newDesc);
             return true;
         }
 
@@ -143,6 +184,7 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
             pigInventories.remove(targetUuid);
             frozenPigs.remove(targetUuid);
             cooldownUntil.remove(targetUuid);
+            waterTimeMap.remove(targetUuid);
 
             File file = new File(getDataFolder() + "/inventories/", targetUuid.toString() + ".yml");
             if (file.exists()) {
@@ -150,6 +192,22 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
             }
 
             player.sendMessage(ChatColor.GREEN + "[OP] Zresetowano stan i usunięto dane świni gracza " + args[1]);
+            return true;
+        }
+
+        // --- KOMENDY DLA GRACZA ---
+        if (sub.equals("opis")) {
+            if (args.length < 2) {
+                player.sendMessage(ChatColor.RED + "Użycie: /swinia opis <twój_opis>");
+                return true;
+            }
+            StringBuilder sb = new StringBuilder();
+            for (int i = 1; i < args.length; i++) {
+                sb.append(args[i]).append(" ");
+            }
+            String customDesc = sb.toString().trim();
+            savePigDescription(player.getUniqueId(), customDesc);
+            player.sendMessage(ChatColor.GREEN + "Pomyślnie zmieniono opis Twojej świni!");
             return true;
         }
 
@@ -266,7 +324,6 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
 
         pig.getPersistentDataContainer().set(ownerKey, PersistentDataType.STRING, player.getUniqueId().toString());
 
-        // Dodanie czapki z grzyba
         attachMushroomHat(pig);
 
         activePigs.put(player.getUniqueId(), pig);
@@ -275,7 +332,7 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
     }
 
     private void attachMushroomHat(Pig pig) {
-        removeMushroomHat(pig); // Upewniamy się, że nie ma starej czapki
+        removeMushroomHat(pig);
 
         ArmorStand stand = pig.getWorld().spawn(pig.getLocation(), ArmorStand.class);
         stand.setVisible(false);
@@ -304,10 +361,13 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
         player.sendMessage(ChatColor.YELLOW + "/swinia schowaj " + ChatColor.WHITE + "- Chowa świnię bez utraty przedmiotów.");
         player.sendMessage(ChatColor.YELLOW + "/swinia stoj " + ChatColor.WHITE + "- Zatrzymuje świnię w promieniu 3 bloków.");
         player.sendMessage(ChatColor.YELLOW + "/swinia nazwa <tekst> " + ChatColor.WHITE + "- Zmienia dopisek w nazwie świni.");
-        player.sendMessage(ChatColor.YELLOW + "/swinia autorespawn " + ChatColor.WHITE + "- Włącza/wyłącza automatyczne respawnowanie świni po Twojej śmierci.");
+        player.sendMessage(ChatColor.YELLOW + "/swinia opis <tekst> " + ChatColor.WHITE + "- Ustawia własny opis świni widoczny dla innych.");
+        player.sendMessage(ChatColor.YELLOW + "/swinia autorespawn " + ChatColor.WHITE + "- Włącza/wyłącza automatyczny respawn po śmierci.");
         if (player.isOp()) {
-            player.sendMessage(ChatColor.RED + "[OP] /swinia podglad <nick> " + ChatColor.WHITE + "- Podgląd ekwipunku świni gracza.");
-            player.sendMessage(ChatColor.RED + "[OP] /swinia reset <nick> " + ChatColor.WHITE + "- Całkowity reset świni i danych gracza.");
+            player.sendMessage(ChatColor.RED + "[OP] /swinia podglad <nick> " + ChatColor.WHITE + "- Podgląd ekwipunku świni.");
+            player.sendMessage(ChatColor.RED + "[OP] /swinia podgladopis <nick> " + ChatColor.WHITE + "- Podgląd opisu świni.");
+            player.sendMessage(ChatColor.RED + "[OP] /swinia zmienopis <nick> <opis> " + ChatColor.WHITE + "- Zmiana opisu świni gracza.");
+            player.sendMessage(ChatColor.RED + "[OP] /swinia reset <nick> " + ChatColor.WHITE + "- Całkowity reset świni gracza.");
         }
     }
 
@@ -328,6 +388,7 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
         pig.remove();
         activePigs.remove(ownerUuid);
         frozenPigs.remove(ownerUuid);
+        waterTimeMap.remove(ownerUuid);
 
         if (triggerCooldown) {
             cooldownUntil.put(ownerUuid, System.currentTimeMillis() + 60000L);
@@ -336,6 +397,22 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
         Player owner = Bukkit.getPlayer(ownerUuid);
         if (owner != null && owner.isOnline() && reasonMessage != null) {
             owner.sendMessage(reasonMessage);
+        }
+    }
+
+    // --- EASTER EGG TOSOWNIK ---
+    @EventHandler
+    public void onPlayerChat(AsyncPlayerChatEvent event) {
+        Player player = event.getPlayer();
+        if (player.getName().equalsIgnoreCase("Tosownik")) {
+            if (event.getMessage().trim().equalsIgnoreCase("elo")) {
+                Bukkit.getScheduler().runTask(this, () -> {
+                    Bukkit.broadcastMessage(ChatColor.GOLD + "" + ChatColor.BOLD + "Kuba buduje imperium, swinie uciekaja");
+                    for (var entry : new HashMap<>(activePigs).entrySet()) {
+                        despawnPigWithSmoke(entry.getKey(), entry.getValue(), null, false);
+                    }
+                });
+            }
         }
     }
 
@@ -387,7 +464,7 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
         if (!(entity instanceof Pig pig)) return;
 
         if (pig.getPersistentDataContainer().has(ownerKey, PersistentDataType.STRING)) {
-            event.setCancelled(true); // Anuluje jeżdżenie, zakładanie siodła itp.
+            event.setCancelled(true);
 
             if (event.getHand() != EquipmentSlot.HAND) return;
 
@@ -398,7 +475,12 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
             UUID ownerUuid = UUID.fromString(ownerUuidStr);
 
             if (!player.getUniqueId().equals(ownerUuid) && !player.isOp()) {
-                player.sendMessage(ChatColor.RED + "To nie jest Twoja świnia! Nie masz dostępu do jej ekwipunku.");
+                Player ownerPlayer = Bukkit.getPlayer(ownerUuid);
+                String ownerName = ownerPlayer != null ? ownerPlayer.getName() : "innego gracza";
+                String desc = getPigDescription(ownerUuid, ownerName);
+
+                player.sendMessage(ChatColor.RED + "Nie możesz okraść tej świnki! Należy ona do gracza " + ChatColor.YELLOW + ownerName + ChatColor.RED + ".");
+                player.sendMessage(ChatColor.GOLD + "Opis świni: " + ChatColor.ITALIC + ChatColor.WHITE + desc);
                 return;
             }
 
@@ -496,6 +578,29 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
         pigInventories.put(ownerUuid, inv);
     }
 
+    // --- ZARZĄDZANIE OPISAMI ŚWIŃ ---
+    private String getPigDescription(UUID ownerUuid, String fallbackName) {
+        File file = new File(getDataFolder() + "/inventories/", ownerUuid.toString() + ".yml");
+        if (file.exists()) {
+            YamlConfiguration config = YamlConfiguration.loadConfiguration(file);
+            if (config.contains("description")) {
+                return config.getString("description");
+            }
+        }
+        return "Świnia gracza " + fallbackName;
+    }
+
+    private void savePigDescription(UUID ownerUuid, String description) {
+        File file = new File(getDataFolder() + "/inventories/", ownerUuid.toString() + ".yml");
+        YamlConfiguration config = YamlConfiguration.loadConfiguration(file);
+        config.set("description", description);
+        try {
+            config.save(file);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
     private class PigTickTask extends BukkitRunnable {
         @Override
         public void run() {
@@ -526,7 +631,25 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
                     continue;
                 }
 
-                // Zapewnienie istnienia czapeczki-grzyba
+                // ŚWINIA W LAWIE
+                if (pig.getLocation().getBlock().getType() == Material.LAVA) {
+                    despawnPigWithSmoke(ownerUuid, pig, ChatColor.RED + "Twoja świnia wpadła do lawy i uciekła! Musisz odczekać 1 minutę przed ponownym przyzwaniem.", true);
+                    continue;
+                }
+
+                // GRACZ W WODZIE (3 MINUTY)
+                if (owner.getLocation().getBlock().getType() == Material.WATER) {
+                    long waterStart = waterTimeMap.getOrDefault(ownerUuid, now);
+                    waterTimeMap.putIfAbsent(ownerUuid, waterStart);
+
+                    if (now - waterStart >= 180000L) { // 3 minuty = 180 000 ms
+                        despawnPigWithSmoke(ownerUuid, pig, ChatColor.BLUE + "Spędziłeś/aś ponad 3 minuty w wodzie! Twoja świnia uciekła przed zamoknięciem. Odczekaj 1 minutę.", true);
+                        continue;
+                    }
+                } else {
+                    waterTimeMap.remove(ownerUuid);
+                }
+
                 if (pig.getPassengers().isEmpty()) {
                     attachMushroomHat(pig);
                 }
@@ -534,7 +657,6 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
                 Location pigLoc = pig.getLocation();
                 Location ownerLoc = owner.getLocation();
 
-                // SPRAWDZENIE TELEPORTACJI (Różne światy LUB dystans > 20 bloków)
                 boolean isDifferentWorld = !pigLoc.getWorld().equals(ownerLoc.getWorld());
                 boolean isTooFar = !isDifferentWorld && pigLoc.distance(ownerLoc) > 20.0;
 
@@ -544,7 +666,6 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
                         continue;
                     }
                 } else {
-                    // Obsługa zatrzymania
                     Location anchorLoc = frozenPigs.get(ownerUuid);
                     if (pigLoc.getWorld().equals(anchorLoc.getWorld()) && pigLoc.distance(anchorLoc) > 3.0) {
                         Vector backToAnchor = anchorLoc.toVector().subtract(pigLoc.toVector()).normalize().multiply(0.2);
@@ -554,7 +675,6 @@ public final class PiggyPet extends JavaPlugin implements CommandExecutor, Liste
                     continue;
                 }
 
-                // CHODZENIE ZA GRACZEM
                 Vector direction = ownerLoc.toVector().subtract(pigLoc.toVector());
 
                 if (direction.lengthSquared() > 0) {
