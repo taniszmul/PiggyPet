@@ -1,6 +1,6 @@
 name: SwiniaPlugin
 version: 2.9
-main: com.example.swiniaplugin.SwiniaPlugin
+main: pl.twojnick.piggypet.PiggyPet
 api-version: 1.13
 authors: [TwojNick]
 description: Zaawansowany system osobistej swini dla graczy.
